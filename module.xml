@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Export generator="IRIS" version="26">
+  <Document name="alwo-pyhelper.ZPM">
+    <Module>
+      <Name>alwo-pyhelper</Name>
+      <Version>1.0.0</Version>
+      <Description>Extra Python Interop for invocation, arguments and return types</Description>
+      <Keywords>Python Tuple List Array Dictionary</Keywords>
+      <Packaging>module</Packaging>
+      <SourcesRoot>udl</SourcesRoot>
+	  <Resource Name="alwo.PyHelper.CLS"/>
+    </Module>
+  </Document>
+</Export>

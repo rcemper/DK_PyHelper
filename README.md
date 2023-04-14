@@ -17,8 +17,8 @@ But what happens if we try an invalid path?
 ''
 ```
 An empty value was returned. However is this empty string valid, OR did something go wrong?
-The class in out example, EnsLib.HL7.Message, provides a supporting OUTPUT parameter "pStatus" that will inform on the validity of value being returned.
-Using the TupleOut feature we can access both the return value and this method sucess status in one operation.
+The class in our example, EnsLib.HL7.Message, provides a supporting OUTPUT parameter "pStatus" that will inform on the validity of value being returned.
+Using the TupleOut feature we can access both the return value and this method success status in one operation.
 ```python
 > hl7=iris.cls("EnsLib.HL7.Message")._OpenId(145,0)
 > val, status = iris.cls("alwo.PyHelper").TupleOut(hl7,"GetValueAt",['pStatus'],1,"<&$BadMSH:9.1")

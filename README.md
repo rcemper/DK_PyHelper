@@ -1,6 +1,10 @@
 # PyHelper
 Extra Python Interop for invocation, arguments and return types
 
+# Install:
+
+IPM (ZPM): install alwo-pyhelper
+
 # TupleOut feature
 When accessing IRIS methods from Python there are some useful output parameters that are convenient to also access in addition to a return type.
 Consider the following example where we retrieve the text value found at a location in an HL7 message:

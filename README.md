@@ -34,6 +34,31 @@ True
 ERROR <Ens>ErrGeneral: No segment found at path '<&$BadMSH'1
 ```
 
+## Returning ByRef literal as though Output
+Historically, from objectscript parameters would be passed By-Reference for "dictionaries" for both input and output.
+The Output directive evolved later and so there is much implementation using ByRef when the API intention was intented for what is now just Output.
+Therefore it is useful to be able to access internal ByRef literals as though they has been implemented as accessible Output parameters.
+Simply include the ByRef parameter name and it will be included in the output Tuple
+```python
+> out,tsc=iris.cls("alwo.PyHelper").TupleOut("EnsLib.HL7.Message","%OpenId",['sc'],1,'er145999', 0)
+> out
+''
+> iris.cls("%SYSTEM.Status").DisplayError(tsc)
+ERROR #5809: Object to Load not found, class 'EnsLib.HL7.Message', ID 'er145999'1
+```
+## Support for %objlasterror
+In objectscript there is access to percent variables across method scope.
+There are scenarios where detecting or accessing special variable %objlasterror is useful after calling a CORE or thirdparty API.
+This utility facilitate Python context access to the %objlasterror variable as though it has been defined as an Output parameter, when invoking methods from Python.
+```python
+> del _objlasterror
+> out,_objlasterror=iris.cls("alwo.PyHelper").TupleOut("EnsLib.HL7.Message","%OpenId",['%objlasterror'],1,'er145999', 0)
+
+> iris.cls("%SYSTEM.Status").DisplayError(_objlasterror)
+
+ERROR #5809: Object to Load not found, class 'EnsLib.HL7.Message', ID 'er145999'1
+```
+
 ## Arguments explained
 
  Name | Description

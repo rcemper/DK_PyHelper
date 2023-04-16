@@ -4,6 +4,9 @@
 ///                                      Added Error log notifications for unsupported types.
 ///                                      Added string only keys for dictionaries
 ///                         2023-04-14 - Make IRIS Method return value + output parameters to be returnable to Python as tuple
+///                         2023-04-16 - Resolve signatures for Base classes
+///                                      Facilitate ByRef literals to also be returnable via Python via Tuple output.
+///                                      Access for %objlasterror special variable via Tuple output.
 /// </pre>
 /// 
 /// Mission:<br/>
@@ -298,6 +301,29 @@ ClassMethod pyTypeName(obj As %SYS.Python) As %String [ Language = python ]
 /// <li>args - Optionally one or more arguments. Where there arguments are Python Lists or Python Dictionaries, they will be specially handled
 /// to interop with IRIS List and Array types used by methods internally.</li>
 /// </ul>
+/// <h2>Returning ByRef literal as though Output</h2>
+/// Historically internally parameters would be passed By-Reference for "dictionaries" for both input and output
+/// The Output directive evolved later and so there is much implementation using ByRef when the API intention was intented for what is now just Output
+/// There fore it is useful to be able to access internal ByRef literals as though they has been implemented as accessible Output parameters.
+/// Simply include the ByRef parameter name and it will be included in the output Tuple
+/// <example language="NONE">
+/// > out,tsc=iris.cls("alwo.PyHelper").TupleOut("EnsLib.HL7.Message","%OpenId",['sc'],1,'er145999', 0)
+/// > out
+/// ''
+/// > iris.cls("%SYSTEM.Status").DisplayError(tsc)
+/// ERROR #5809: Object to Load not found, class 'EnsLib.HL7.Message', ID 'er145999'1
+/// </example>
+/// <h2>Support for %objlasterror</h2>
+/// In objectscript there is access to percent variables across method scope.
+/// There are scenarios where detecting or accessing special variable %objlasterror is useful after calling a CORE or thirdparty API
+/// This utility allows implicit access to %objlasterror as though it has been defined as an Output parameter, when invoking methods from Python
+/// <example language="NONE">
+/// del _objlasterror
+/// > out,_objlasterror=iris.cls("alwo.PyHelper").TupleOut("EnsLib.HL7.Message","%OpenId",['%objlasterror'],1,'er145999', 0)
+/// 
+/// > iris.cls("%SYSTEM.Status").DisplayError(_objlasterror)
+/// ERROR #5809: Object to Load not found, class 'EnsLib.HL7.Message', ID 'er145999'1
+/// </example>
 ClassMethod TupleOut(objectOrReference As %RegisteredObject, methodname, namesForOutput, returnsValue = 1, args...) As %SYS.Python
 {
 	set implBi=##class(%SYS.Python).Import("builtins")
@@ -308,9 +334,12 @@ ClassMethod TupleOut(objectOrReference As %RegisteredObject, methodname, namesFo
 		set theclassname=objectOrReference
 	}
 	
-	set methodDictionary=##class(%Dictionary.MethodDefinition).%OpenId(theclassname_"||"_methodname,0)
-	quit:'$IsObject(methodDictionary)
-	set formalSpec=methodDictionary.FormalSpec
+	// check this and base classes for signature
+	do ..getFormalSpec(theclassname,methodname,.formalSpec,.success)
+	quit:'success
+	
+	// the FormalSpec may come from inherited functionality
+	
 	
 	if '$Data(namesForOutput) {
 		set namesForOutput=$LB()	
@@ -321,9 +350,11 @@ ClassMethod TupleOut(objectOrReference As %RegisteredObject, methodname, namesFo
 		set namesForOutput=##class(Py.Helper).ListFrompyList(namesForOutput)	
 	}
 	
-	for i=1:1:args {
-		// Strip out the None objects that are passed in to represent undef arg
-		if $D(args(i)),$IsObject(args(i)),"NoneType"=implBi.type(args(i))."__name__" kill args(i)
+	if $Data(args) {
+		for i=1:1:args {
+			// Strip out the None objects that are passed in to represent undef arg
+			if $D(args(i)),$IsObject(args(i)),"NoneType"=implBi.type(args(i))."__name__" kill args(i)
+		}
 	}
 	
 	if $D(args(1)) kill item merge item=args(1) do ..unwrapType(.item,.k1,implBi)
@@ -338,7 +369,7 @@ ClassMethod TupleOut(objectOrReference As %RegisteredObject, methodname, namesFo
 	if $D(args(10)) kill item merge item=args(10) do ..unwrapType(.item,.k10,implBi)
 	
 	// Associate name of item with output
-	set argnum=$O(args(""),-1)
+	set argnum=+($O(args(""),-1))
 	if formalSpec'="" {
 		// if not elipsis ie: "args..."
 		if ($P(formalSpec,",")'["...") {
@@ -348,7 +379,7 @@ ClassMethod TupleOut(objectOrReference As %RegisteredObject, methodname, namesFo
 				// incase there were default value content that included a commas and needs discarding
 				continue:name'?1(.1(1"&",1"*").(1"%",1"_")1A,1A).AN  
 				set itemcount=itemcount+1
-				continue:"*"'=$E(name)  // only interested in output arguments
+				continue:$E(name)'?1(1"*",1"&")  // only interested in output arguments and ByRef if needed for literal
 				set outname($E(name,2,*))=itemcount
 				set:argnum<itemcount argnum=itemcount
 			}
@@ -496,7 +527,11 @@ ClassMethod TupleOut(objectOrReference As %RegisteredObject, methodname, namesFo
 			if '$Data(outname(item)) {
 				if '$Data(outlist) {
 					set outlist=$LB() quit	
-				} else {
+				} elseif item="%objlasterror" {
+					kill outret
+					do ..wrapType($G(%objlasterror),.outret,implBi)
+					do outlist.append(.outret)
+				} else  {
 					set outlist=outlist_$LB()
 				}
 			} else {
@@ -578,6 +613,45 @@ ClassMethod wrapType(ByRef item, ByRef ret, implBi = {##class(%SYS.Python).Impor
 ClassMethod getNone(ByRef ret) As %SYS.Python [ Internal, Language = python, Private ]
 {
 ret=None
+}
+
+/// Search a class and its base classes for a method definition
+ClassMethod getFormalSpec(classname, method, Output formalSpec As %String, Output success As %Boolean, ByRef checked)
+{
+	set formalSpec=""
+	set success=0
+	if ##class(%Dictionary.MethodDefinition).%ExistsId(classname_"||"_method) {
+		set tMethod=##class(%Dictionary.MethodDefinition).%OpenId(classname_"||"_method,0)
+		if $IsObject(tMethod) {
+			set formalSpec=tMethod.FormalSpec
+			set success=1
+			quit
+		}
+	}
+	#dim tClass as %Dictionary.ClassDefinition=##class(%Dictionary.ClassDefinition).%OpenId(classname,0)
+	if '$IsObject(tClass) {
+		quit
+	}
+	set super=$ZSTRIP(tClass.Super,"*W")
+	quit:super=""
+	for ipiece=1:1:$L(super,",") {
+		set superItem=$Piece(super,",",ipiece)
+		continue:superItem=""
+		if superItem'["." {
+			if "%"=$E(superItem) {
+				set superItem="%Library."_$E(superItem,2,*)
+			} else {
+				// copy from parent
+				set superItem=$P(classname,".",1,$L(classname,".")-1)_"."_superItem	
+			}
+		}
+		// only test resolve once per base class defintion regardless how many times it might be includes in base tree
+		continue:$Data(checked(superItem))
+		set checked(superItem)=""
+		continue:'##class(%Dictionary.ClassDefinition).%ExistsId(superItem)
+		do ..getFormalSpec(superItem,method,.formalSpec,.success)
+		quit:success
+	}
 }
 
 }

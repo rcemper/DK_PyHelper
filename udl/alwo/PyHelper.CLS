@@ -7,6 +7,14 @@
 ///                         2023-04-16 - Resolve signatures for Base classes
 ///                                      Facilitate ByRef literals to also be returnable via Python via Tuple output.
 ///                                      Access for %objlasterror special variable via Tuple output.
+///                         2023-04-23 - Added support for Multidimensional Property access and update:
+/// 								     MultiGet - Retrieve the simple value or default from root or sub-key of multidimensional property 
+/// 								     MultiSet - Set the value of multidimensional property at root or sub-key
+/// 								     MultiKeys - Return a Python list of keys at property root or sub-key
+/// 								     MultiReplace - Replace the whole property data or a sub-key with a python dictionary
+/// 								     MultiMerge - Merge a python dictionary to root multidimensional property or sub-key
+/// 								     MultiDel - Delete whole multidimensional property data or just a subkey
+///                                      
 /// </pre>
 /// 
 /// Mission:<br/>
@@ -34,6 +42,11 @@
 /// </ul>
 Class alwo.PyHelper [ Abstract ]
 {
+
+ClassMethod A()
+{
+#define publist (kCount,k1,k2,k3,k4,k5,k6,k7,k8,k9,k10)
+}
 
 /// Allows dictionary key to be set
 /// python language provides "[]" mutator
@@ -652,6 +665,278 @@ ClassMethod getFormalSpec(classname, method, Output formalSpec As %String, Outpu
 		do ..getFormalSpec(superItem,method,.formalSpec,.success)
 		quit:success
 	}
+}
+
+ClassMethod UnpackArgsStopFirstNone(ByRef args, implBi = {##class(%SYS.Python).Import("builtins")}, Output kAry) [ ProcedureBlock = 0 ]
+{
+	
+	kill kAry
+	set (stop)=0
+	set kAry=$G(args,0)
+	
+	if $Data(args) {
+		for i=1:1:args {
+			if stop {
+				kill args(i)
+				continue	
+			}
+			// Strip out the None objects that are passed in to represent undef arg
+			if $D(args(i)),$IsObject(args(i)),"NoneType"=implBi.type(args(i))."__name__" {
+				kill args(i)
+				set kAry=i-1
+				set stop=1  // No further processing after first None key found
+				continue
+			}
+			if $D(args(i)) {
+				kill item,ret merge item=args(i) do ..unwrapType(.item,.ret,implBi) merge kAry(i)=ret
+			} else { quit }
+		}
+	}
+	return
+}
+
+/// Make quoted arguments for mutidimensional keys access
+ClassMethod QuoteKeys(implBi = {##class(%SYS.Python).Import("builtins")}, ByRef kAry)
+{
+	quit:0=kAry ""
+	quit:'$D(kAry(1)) ""
+	set ret="("_$$$QUOTE(kAry(1))
+	for i=2:1:kAry {
+		set ret=ret_","_$$$QUOTE(kAry(i))
+	}
+	quit ret_")"
+}
+
+/// Retrieves a single value if found at path through Multidimensional Property.
+/// Returns value or Default<br/>
+/// <example>
+/// > iris.cls("alwo.PyHelper").MultiGet(stream,"Attributes",None,"Filename")
+/// 'text/html'
+/// Requesting an undefined key:
+/// </example>
+/// <example>
+/// > iris.cls("alwo.PyHelper").MultiGet(stream,"Attributes",None,"Unknown")
+/// None
+/// </example>
+/// Requesting the whole multidimensional property as dictionary
+/// <example>
+/// > iris.cls("alwo.PyHelper").MultiGet(shopper,"Basket")
+/// {'Fruit': {'apples':10, 'pears':3, 'oranges':4}}
+/// </example>
+/// Default can be directed to be "None" or other value instead of empty string
+/// <example>
+/// iris.cls("alwo.PyHelper").MultiGet(shopper,"Basket",None)
+/// </example>
+ClassMethod MultiGet(object As %RegisteredObject, propertyName, default = "", keys...) As %SYS.Python
+{
+	
+	set implBi=##class(%SYS.Python).Import("builtins")
+	set ret=default
+	return:'$Data(object) default
+	return:'$IsObject(object) default
+	return:'$Data(propertyName) default
+	
+	try {
+		do ..unwrapType(.propertyName, .uwPropertyName, implBi)
+		return:'$Data(uwPropertyName) default
+		return:$LISTVALID(uwPropertyName) default
+		return:""=uwPropertyName default
+		
+		return:'##class(%Dictionary.CompiledProperty).%ExistsId(object.%ClassName(1)_"||"_uwPropertyName) default
+		
+		do ..UnpackArgsStopFirstNone(.keys,implBi,.kAry)
+		set eval="(item,object) set item=object."_uwPropertyName
+		set:($G(kAry,0)>0) eval=eval_..QuoteKeys(implBi,.kAry)	
+		x (eval, .item, object)
+		return:'$Data(item) default
+		if $Data(item) k ret d ..wrapType(.item,.ret,implBi)
+		
+	} catch {
+		// For undefined keys
+		set ret=default
+	}
+	return ret
+}
+
+/// Assign simple value to Path in Multidimensional Property
+/// <example>
+/// iris.cls("alwo.PyHelper").MultiSet(stream,"Attributes","text/html","Content-Type")
+/// </example>
+ClassMethod MultiSet(object As %RegisteredObject, propertyName, value, keys...)
+{
+	return:'$Data(object)
+	return:'$IsObject(object)
+	return:'$Data(propertyName)
+	set implBi=##class(%SYS.Python).Import("builtins")
+	
+	try {
+		do ..unwrapType(.propertyName, .uwPropertyName, implBi)
+		return:'$Data(uwPropertyName)
+		return:$LISTVALID(uwPropertyName)
+		return:""=uwPropertyName
+		
+		return:'##class(%Dictionary.CompiledProperty).%ExistsId(object.%ClassName(1)_"||"_uwPropertyName)
+		
+		do ..UnpackArgsStopFirstNone(.keys,implBi,.kAry)
+		
+		do ..unwrapType(.value, .uwvalue, implBi)
+		
+		// set the value
+		if (0=kAry) {
+			x ("(object,value) s object."_uwPropertyName_"=value", object, value)
+		} else {
+			X ("(object,value) s object."_uwPropertyName_..QuoteKeys(implBi,.keys)_"=value",object, value)	
+		}
+		
+	} catch {}
+}
+
+/// returns List of Key names at path in Multidimensional Property
+/// <example>
+/// > iris.cls("alwo.PyHelper").MultiKeys(shopper,"Prop1","Fruit")
+/// ['apples','pears','oranges']
+/// </example>
+/// Note that keys automatically sort in Multidimensional properties
+ClassMethod MultiKeys(object As %RegisteredObject, propertyName, keys...) As %SYS.Python
+{
+	set implBi=##class(%SYS.Python).Import("builtins")
+	// unpack value
+	set ret=implBi.list()
+	return:'$IsObject(object) ret
+	
+	try {
+		do ..unwrapType(.propertyName, .uwPropertyName, implBi)
+		return:'$Data(uwPropertyName) ret
+		return:$LISTVALID(uwPropertyName) ret
+		return:""=uwPropertyName ret
+		
+		return:'##class(%Dictionary.CompiledProperty).%ExistsId(object.%ClassName(1)_"||"_uwPropertyName) ret
+
+		do ..UnpackArgsStopFirstNone(.keys,implBi,.kAry)
+
+		set keyBaseS="(item,object) set item=$Order(object."_uwPropertyName
+
+		if (0=$G(kAry,0)) {
+			set eval=keyBaseS_"(item))"  // No keys supplied so $Order on first key
+		} else {
+			set eval=keyBaseS_($E(..QuoteKeys(implBi,.kAry),1,*-1)_",item))")	
+		}
+		set item=""
+		for {
+			X (eval,.item,.object)
+			quit:item=""
+			do ret.append(item)
+		}
+	} catch err {}
+	return ret
+}
+
+/// Replace the whole dictionary
+/// <example>
+/// > myBasket={'Fruit': {'apples':10, 'pears':3, 'oranges':4}}
+/// > iris.cls("alwo.PyHelper").MultiReplace(m,"Things",myBasket)
+/// </example>
+ClassMethod MultiReplace(object As %RegisteredObject, propertyName, dict = "", keys...)
+{
+	return:'$IsObject(object)
+	set implBi=##class(%SYS.Python).Import("builtins")
+	
+	try {
+		do ..unwrapType(.propertyName, .uwPropertyName, implBi)
+		return:'$Data(uwPropertyName)
+		return:$LISTVALID(uwPropertyName)
+		return:""=uwPropertyName
+		
+		return:'##class(%Dictionary.CompiledProperty).%ExistsId(object.%ClassName(1)_"||"_uwPropertyName)
+		do ..ArrayFrompyDict(dict,implBi,.ary)
+		
+		do ..UnpackArgsStopFirstNone(.keys,implBi,.kAry)
+		
+		if kAry=0 {
+			x ("(object) k object."_uwPropertyName, object)
+		} else {
+			x ("(object) k object."_uwPropertyName_..QuoteKeys(implBi,.kAry),object)
+		}
+		
+		return:'$Data(ary)  /// empty array
+		if kAry=0 {
+			x ("(object,ary) m object."_uwPropertyName_"=ary", object, .ary)
+		} else {
+			X ("(object,ary) m object."_uwPropertyName_..QuoteKeys(implBi,.kAry)_"=ary",object, .ary)
+		}
+		
+	} catch {}
+}
+
+/// Push the additional values into an existing multidimensional property
+/// <example>
+/// toolbox={'Tools':{'saw':1,'rasp':2,'sandpaper':5}}
+/// iris.cls("alwo.PyHelper").MultiMerge(m,"Prop1",toolbox)
+/// <example>
+ClassMethod MultiMerge(object As %RegisteredObject, propertyName, dict, keys...)
+{
+	return:'$IsObject(object)
+	set implBi=##class(%SYS.Python).Import("builtins")
+	
+	try {
+		do ..unwrapType(.propertyName, .uwPropertyName, implBi)
+		return:'$Data(uwPropertyName)
+		return:$LISTVALID(uwPropertyName)
+		return:""=uwPropertyName
+		
+		return:'##class(%Dictionary.CompiledProperty).%ExistsId(object.%ClassName(1)_"||"_uwPropertyName)
+		do ..ArrayFrompyDict(dict,implBi,.ary)
+		return:'$Data(ary)  /// empty array
+		
+		do ..UnpackArgsStopFirstNone(.keys,implBi,.kAry)
+		
+		if kAry=0 {
+			x ("(object,ary) m object."_uwPropertyName_"=ary", object, .ary)
+		} else {
+			X ("(object,ary) m object."_uwPropertyName_..QuoteKeys(implBi,.kAry)_"=ary",object, .ary)
+		}
+	} catch {}
+}
+
+/// "del" is python for "kill"
+/// <example>
+/// import iris
+/// m=iris.cls("Test.Example")._New()
+/// myBasket={'Fruit': {'apples':10, 'pears':3, 'oranges':4}}
+/// toolbox={'Tools':{'saw':1,'rasp':2,'sandpaper':5}}
+/// iris.cls("alwo.PyHelper").MultiMerge(m,"Prop1",myBasket)
+/// iris.cls("alwo.PyHelper").MultiMerge(m,"Prop1",toolbox)
+/// # show two keys "Fruit" and "Tools"
+/// iris.cls("alwo.PyHelper").MultiKeys(m,"Prop1")
+/// # remove "Fruit" key
+/// iris.cls("alwo.PyHelper").MultiDel(m,"Prop1","Fruit")
+/// # show keys ['rasp', 'sandpaper', 'saw']
+/// iris.cls("alwo.PyHelper").MultiKeys(m,"Prop1","Tools")
+/// # remove sub key "saw"
+/// iris.cls("alwo.PyHelper").MultiDel(m,"Prop1","Tools","saw")
+/// # show sub keys: ['rasp', 'sandpaper']
+/// iris.cls("alwo.PyHelper").MultiKeys(m,"Prop1","Tools")
+/// </example>
+ClassMethod MultiDel(object As %RegisteredObject, propertyName, keys...)
+{
+	return:'$IsObject(object)
+	set implBi=##class(%SYS.Python).Import("builtins")
+	
+	try {
+		do ..unwrapType(.propertyName, .uwPropertyName, implBi)
+		return:'$Data(uwPropertyName)
+		return:$LISTVALID(uwPropertyName)
+		return:$L(uwPropertyName)=0
+		
+		do ..UnpackArgsStopFirstNone(.keys,implBi,.kAry)
+		
+		return:'##class(%Dictionary.CompiledProperty).%ExistsId(object.%ClassName(1)_"||"_uwPropertyName)
+		if (0=kAry) {
+			x ("(object) k object."_uwPropertyName,object)
+		} else {
+			x ("(object) k object."_uwPropertyName_..QuoteKeys(implBi,.kAry),object)
+		}
+	} catch {}
 }
 
 }

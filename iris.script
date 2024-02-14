@@ -1,0 +1,22 @@
+    zn "%SYS"
+
+    // ** Comment out these two line for Production use **
+    do ##class(Security.Users).UnExpireUserPasswords("*")
+
+   ; enabling callin for Embedded Python
+    do ##class(Security.Services).Get("%Service_CallIn",.prop)
+    set prop("Enabled")=1
+    set prop("AutheEnabled")=48
+    do ##class(Security.Services).Modify("%Service_CallIn",.prop)
+
+    zpm "install passwordless"
+
+    zn "USER"
+
+    // Create /_vscode web app to support intersystems-community.testingmanager VS Code extension
+    zpm "install vscode-per-namespace-settings"
+    zpm "install webterminal"
+
+    ; importing the source code of the repository as ZPM module
+    zpm "load /home/irisowner/dev/ -v":1
+    halt
